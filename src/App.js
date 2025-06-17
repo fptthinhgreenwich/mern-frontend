@@ -17,7 +17,7 @@ function App() {
         <h1>VIP MERN Stack CI/CD Demo</h1>
         <p>Frontend says: Hello from React!</p>
         <p>Frontend says: Hello from React!</p>
-        <p>Frontend says: Hello from React!11</p>
+        <p>Frontend says: Hello from React!112</p>
 
         <p>Backend says: {message}</p>
       </header>
