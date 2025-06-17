@@ -1,0 +1,123 @@
+# File: .github/workflows/ci-frontend.yml
+# In your MERN Frontend Repository (e.g., your-github-user/mern-frontend)
+
+name: Frontend CI Pipeline (Feature to Develop PR)
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+
+      - name: Build Frontend
+        run: npm run build
+
+  deploy_preview:
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel Environment Information
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Build Project Locally (Vercel)
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to Vercel (Preview)
+        run: |
+          vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }} > deployment_url.txt
+          echo "Vercel Preview URL: $(cat deployment_url.txt)"
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Comment on PR with Preview URL
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const deploymentUrl = await require('fs').readFileSync('deployment_url.txt', 'utf8').trim();
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 Frontend Preview Deployment Ready!
+              **URL:** ${deploymentUrl}`
+            });
+
+  teardown_preview:
+    runs-on: ubuntu-latest
+    needs: [ci, deploy_preview]
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel Environment Information
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Get Deployment URL from PR Comment (if exists)
+        id: get_deployment_url
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const previewComment = comments.find(comment => comment.body.includes('Frontend Preview Deployment Ready!'));
+            if (previewComment) {
+              const urlMatch = previewComment.body.match(/URL: (https:\/\/.*)/);
+              if (urlMatch && urlMatch[1]) {
+                console.log(`Found deployment URL: ${urlMatch[1]}`);
+                core.setOutput('deployment_url', urlMatch[1]);
+              }
+            }
+
+      - name: Teardown Vercel Preview Deployment
+        if: steps.get_deployment_url.outputs.deployment_url
+        run: |
+          echo "Attempting to delete deployment: ${{ steps.get_deployment_url.outputs.deployment_url }}"
+          vercel remove ${{ steps.get_deployment_url.outputs.deployment_url }} --token=${{ secrets.VERCEL_TOKEN }} --yes
+          echo "Vercel Preview Deployment removed."
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
